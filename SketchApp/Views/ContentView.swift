@@ -8,9 +8,12 @@ struct ContentView: View {
     @State private var isLoading = false
     @State private var errorMessage = ""
     @State private var showError = false
+    @State private var isFinished = false
+    @State private var debounceTask: Task<Void, Never>?
+    @State private var drawingAspectRatio: CGFloat = 1.0
 
     // DEV: set to true to load bundled test model instead of calling the backend
-    private let useDevModel = true
+    private let useDevModel = false
     private let devModelName = "test_model"   // must match filename in bundle (without extension, expects .usdz)
 
     private let panelCornerRadius: CGFloat = 12
@@ -24,59 +27,83 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             VStack(spacing: 16) {
-                HStack(spacing: panelGap) {
-                    GeometryReader { geometry in
-                        DrawingCanvasView(strokeManager: strokeManager, mode: $mode)
+                GeometryReader { geometry in
+                    HStack(spacing: panelGap) {
+                        DrawingCanvasView(strokeManager: strokeManager, mode: $mode, isLocked: isFinished)
                             .padding(panelPadding)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .onChange(of: geometry.size, initial: true) { _, newSize in
-                                canvasSize = newSize
-                            }
-                    }
-                    .background(Color.white)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: panelCornerRadius)
-                            .stroke(Theme.accent.opacity(0.80), lineWidth: 1)
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: panelCornerRadius))
+                            .frame(width: isFinished ? geometry.size.width * 0.42 : geometry.size.width * 0.50)
+                            .frame(maxHeight: .infinity)
+                            .aspectRatio(drawingAspectRatio, contentMode: .fit)
+                            .background(Color.white)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: panelCornerRadius)
+                                    .stroke(Theme.accent.opacity(0.80), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: panelCornerRadius))
 
-                    ModelDisplayView(glbData: glbData, isLoading: isLoading)
-                        .padding(panelPadding)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Theme.background.opacity(0.92))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: panelCornerRadius)
-                                .stroke(Theme.accent.opacity(0.80), lineWidth: 1)
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: panelCornerRadius))
+                        ModelDisplayView(glbData: glbData, isLoading: isLoading)
+                            .padding(panelPadding)
+                            .frame(width: isFinished ? geometry.size.width * 0.58 : geometry.size.width * 0.50)
+                            .frame(maxHeight: .infinity)
+                            .background(Theme.background.opacity(0.92))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: panelCornerRadius)
+                                    .stroke(Theme.accent.opacity(0.80), lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: panelCornerRadius))
+                    }
+                    .frame(maxHeight: .infinity)
+                    .animation(.easeInOut(duration: 0.55), value: isFinished)
+                    .onChange(of: geometry.size, initial: true) { _, newSize in
+                        guard newSize.width > 50, newSize.height > 50 else { return }
+                        let canvasW = newSize.width * 0.50 - 2 * panelPadding
+                        let canvasH = newSize.height - 2 * panelPadding
+                        if !isFinished {
+                            canvasSize = CGSize(width: canvasW, height: canvasH)
+                            drawingAspectRatio = canvasW / canvasH
+                        }
+                    }
                 }
                 .frame(maxHeight: .infinity)
 
                 HStack(spacing: 24) {
-                    // TODO: re-enable erase mode
-                    // AppButton(title: "Pen", isActive: mode == .pen) { mode = .pen }
-                    // AppButton(title: "Erase", isActive: mode == .erase) { mode = .erase }
+                    if isFinished {
+                        AppButton(title: "Done") {
+                            debounceTask?.cancel()
+                            isFinished = false
+                            glbData = nil
+                            strokeManager.clear()
+                        }
+                    } else {
+                        AppIconButton(systemImage: "arrow.uturn.backward") {
+                            strokeManager.undo()
+                        }
+                        .disabled(!strokeManager.canUndo)
 
-                    AppIconButton(systemImage: "arrow.uturn.backward") {
-                        strokeManager.undo()
-                    }
-                    .disabled(!strokeManager.canUndo)
+                        AppIconButton(systemImage: "arrow.uturn.forward") {
+                            strokeManager.redo()
+                        }
+                        .disabled(!strokeManager.canRedo)
 
-                    AppIconButton(systemImage: "arrow.uturn.forward") {
-                        strokeManager.redo()
-                    }
-                    .disabled(!strokeManager.canRedo)
-
-                    AppButton(title: "Reset") { strokeManager.clear() }
+                        AppButton(title: "Reset") {
+                            debounceTask?.cancel()
+                            glbData = nil
+                            strokeManager.clear()
+                        }
                         .disabled(strokeManager.strokes.isEmpty)
 
-                    AppButton(
-                        title: isLoading ? "Generating…" : "Finish",
-                        color: Theme.buttonPink,
-                        pressedColor: Theme.buttonPinkPressed,
-                        action: generateModel
-                    )
-                    .disabled(isLoading || strokeManager.strokes.isEmpty)
+                        AppButton(
+                            title: isLoading ? "Generating…" : "Finish",
+                            color: Theme.buttonPink,
+                            pressedColor: Theme.buttonPinkPressed,
+                            action: {
+                                debounceTask?.cancel()
+                                isFinished = true
+                                generateModel()
+                            }
+                        )
+                        .disabled(isLoading || strokeManager.strokes.isEmpty)
+                    }
                 }
                 .padding(.vertical, 12)
             }
@@ -87,9 +114,20 @@ struct ContentView: View {
         } message: {
             Text(errorMessage)
         }
+        .onChange(of: strokeManager.strokes) { _, _ in
+            guard !useDevModel, !isFinished else { return }
+            debounceTask?.cancel()
+            debounceTask = Task {
+                try? await Task.sleep(for: .seconds(0.7))
+                guard !Task.isCancelled else { return }
+                await MainActor.run {
+                    generateModel()
+                }
+            }
+        }
     }
 
-    private func generateModel() {
+    @MainActor private func generateModel() {
         guard !isLoading else { return }
 
         if useDevModel {
@@ -98,7 +136,7 @@ struct ContentView: View {
                let data = try? Data(contentsOf: url) {
                 glbData = data
             } else {
-                errorMessage = "Dev model '\(devModelName).glb' not found in app bundle."
+                errorMessage = "Dev model '\(devModelName).usdz' not found in app bundle."
                 showError = true
             }
             return

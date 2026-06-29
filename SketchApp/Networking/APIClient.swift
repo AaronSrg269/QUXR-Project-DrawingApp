@@ -1,7 +1,18 @@
 import Foundation
 
 struct APIClient {
-    static let endpoint = URL(string: "http://ln-dsk-0hxrv.qu.tu-berlin.de/api_model/generate")!
+    static let baseURL = URL(string: "http://ln-dsk-0hxrv.qu.tu-berlin.de")!
+    static let endpoint = baseURL.appendingPathComponent("api_model/generate")
+
+    /// Health/liveness/ready check. Returns (statusCode, bodyString) or throws URLSession error.
+    func checkEndpoint(_ path: String) async throws -> (Int, String) {
+        let url = APIClient.baseURL.appendingPathComponent(path)
+        let request = URLRequest(url: url)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        let text = String(data: data, encoding: .utf8) ?? ""
+        return (status, text)
+    }
 
     func generateMesh(svgText: String) async throws -> Data {
         let configuration = URLSessionConfiguration.default
@@ -14,7 +25,10 @@ struct APIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
 
-        let body: [String: String] = ["svg_text": svgText]
+        let body: [String: String] = [
+            "svg_text": svgText,
+            "job_id": UUID().uuidString
+        ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
         let (data, response) = try await session.data(for: request)

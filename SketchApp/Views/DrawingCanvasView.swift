@@ -9,6 +9,7 @@ enum DrawingMode {
 struct DrawingCanvasView: UIViewRepresentable {
     @ObservedObject var strokeManager: StrokeManager
     @Binding var mode: DrawingMode
+    var isLocked: Bool = false
 
     func makeUIView(context: Context) -> CanvasView {
         let view = CanvasView()
@@ -19,6 +20,7 @@ struct DrawingCanvasView: UIViewRepresentable {
 
     func updateUIView(_ uiView: CanvasView, context: Context) {
         uiView.mode = mode
+        uiView.isLocked = isLocked
         uiView.strokes = strokeManager.strokes
         uiView.setNeedsDisplay()
     }
@@ -54,6 +56,7 @@ protocol CanvasViewDelegate: AnyObject {
 final class CanvasView: UIView {
     weak var delegate: CanvasViewDelegate?
     var mode: DrawingMode = .pen
+    var isLocked: Bool = false
     var strokes: [[CGPoint]] = []
 
     private var currentStroke: [CGPoint] = []
@@ -117,7 +120,7 @@ final class CanvasView: UIView {
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard activeTouch == nil, let touch = touches.first else { return }
+        guard !isLocked, activeTouch == nil, let touch = touches.first else { return }
         activeTouch = touch
         let point = touch.location(in: self)
         if mode == .pen {
