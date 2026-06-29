@@ -6,6 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		BF54A25D2FEE96ED00A3E7AE /* PostHog in Frameworks */ = {
+			isa = PBXBuildFile;
+			productRef = BF54A25C2FEE96ED00A3E7AE /* PostHog */;
+		};
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		BF54A24D2FEE96EB00A3E7AE /* SketchApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SketchApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +30,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BF54A25D2FEE96ED00A3E7AE /* PostHog in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +73,7 @@
 			);
 			name = SketchApp;
 			packageProductDependencies = (
+				BF54A25C2FEE96ED00A3E7AE /* PostHog */,
 			);
 			productName = SketchApp;
 			productReference = BF54A24D2FEE96EB00A3E7AE /* SketchApp.app */;
@@ -94,6 +103,9 @@
 			);
 			mainGroup = BF54A2442FEE96EB00A3E7AE;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				BF54A25B2FEE96ED00A3E7AE /* PostHog */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = BF54A24E2FEE96EB00A3E7AE /* Products */;
 			projectDirPath = "";
@@ -123,6 +135,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		BF54A25B2FEE96ED00A3E7AE /* PostHog */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/PostHog/posthog-ios.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.56.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		BF54A25C2FEE96ED00A3E7AE /* PostHog */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BF54A25B2FEE96ED00A3E7AE /* PostHog */;
+			productName = PostHog;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin XCBuildConfiguration section */
 		BF54A2562FEE96ED00A3E7AE /* Debug */ = {

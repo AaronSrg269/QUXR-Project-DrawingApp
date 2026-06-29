@@ -6,12 +6,32 @@
 //
 
 import SwiftUI
+import PostHog
 
 @main
 struct SketchAppApp: App {
+    init() {
+        let config = PostHogConfig(
+            projectToken: "<YOUR_POSTHOG_PROJECT_TOKEN>",
+            host: "https://eu.i.posthog.com"
+        )
+
+        // Session replay for the user study
+        config.sessionReplay = true
+        config.sessionReplayConfig.screenshotMode = true          // Required for SwiftUI
+        config.sessionReplayConfig.maskAllTextInputs = true       // Default: mask text fields
+        config.sessionReplayConfig.maskAllImages = true           // Default: mask images
+        config.sessionReplayConfig.captureLogs = false            // Do not capture console logs
+        config.sessionReplayConfig.captureNetworkTelemetry = true // Capture network timing/status only
+        config.sessionReplayConfig.throttleDelay = 1.0            // Reduce capture frequency to save CPU
+
+        PostHogSDK.shared.setup(config)
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .postHogScreenView("Drawing")
         }
     }
 }
