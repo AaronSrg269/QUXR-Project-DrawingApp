@@ -30,12 +30,19 @@ struct ModelDisplayView: View {
 struct ModelWebContainer: UIViewRepresentable {
     let glbData: Data?
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
+        config.userContentController.add(context.coordinator, name: "debug")
+        config.setURLSchemeHandler(context.coordinator.schemeHandler, forURLScheme: "modelviewer")
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.backgroundColor = UIColor(Theme.background)
         webView.isOpaque = false
+        webView.navigationDelegate = context.coordinator
         return webView
     }
 
@@ -47,37 +54,97 @@ struct ModelWebContainer: UIViewRepresentable {
         context.coordinator.load(data: data, into: webView)
     }
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator()
-    }
-
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        let schemeHandler = ModelViewerSchemeHandler()
         private var currentData: Data?
 
         @MainActor func reset(in webView: WKWebView) {
             currentData = nil
+            schemeHandler.glbData = Data()
             webView.loadHTMLString(blankHTML, baseURL: nil)
         }
 
         @MainActor func load(data: Data, into webView: WKWebView) {
             guard currentData != data else { return }
             currentData = data
+            print("[ModelWeb] loading GLB, \(data.count) bytes, header: \(data.prefix(8).map { String(format: "%02x", $0) }.joined())")
 
-            let baseDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("model_viewer", isDirectory: true)
-            try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
-
-            let glbURL = baseDir.appendingPathComponent("model.glb")
-            let htmlURL = baseDir.appendingPathComponent("index.html")
-
-            do {
-                try data.write(to: glbURL, options: [.atomic])
-                try viewerHTML.write(to: htmlURL, atomically: true, encoding: .utf8)
-                webView.loadFileURL(htmlURL, allowingReadAccessTo: baseDir)
-            } catch {
-                print("[ModelWeb] error writing model files: \(error)")
+            guard let jsURL = Bundle.main.url(forResource: "model-viewer-umd", withExtension: "js"),
+                  let jsData = try? Data(contentsOf: jsURL) else {
+                print("[ModelWeb] bundled model-viewer UMD JS not found")
+                return
             }
+
+            schemeHandler.htmlData = viewerHTML.data(using: .utf8) ?? Data()
+            schemeHandler.jsData = jsData
+            schemeHandler.glbData = data
+
+            webView.load(URLRequest(url: URL(string: "modelviewer://localhost/index.html")!))
         }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            print("[ModelWeb] HTML finished loading")
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            print("[ModelWeb] navigation failed: \(error)")
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            print("[ModelWeb] provisional navigation failed: \(error)")
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            print("[ModelWeb JS] \(message.body)")
+        }
+    }
+}
+
+final class ModelViewerSchemeHandler: NSObject, WKURLSchemeHandler {
+    var htmlData = Data()
+    var jsData = Data()
+    var glbData = Data()
+
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url else {
+            urlSchemeTask.didFailWithError(NSError(domain: "ModelViewer", code: -1))
+            return
+        }
+        let path = url.path
+        switch path {
+        case "/index.html":
+            respond(urlSchemeTask, data: htmlData, mimeType: "text/html")
+        case "/model-viewer-umd.js":
+            respond(urlSchemeTask, data: jsData, mimeType: "application/javascript")
+        case "/model.glb":
+            respond(urlSchemeTask, data: glbData, mimeType: "model/gltf-binary")
+        default:
+            urlSchemeTask.didFailWithError(NSError(domain: "ModelViewer", code: 404))
+        }
+    }
+
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        // no-op
+    }
+
+    private func respond(_ task: WKURLSchemeTask, data: Data, mimeType: String) {
+        guard let url = task.request.url,
+              let response = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: [
+                    "Content-Type": mimeType,
+                    "Content-Length": String(data.count),
+                    "Access-Control-Allow-Origin": "*"
+                ]
+              ) else {
+            task.didFailWithError(NSError(domain: "ModelViewer", code: -1))
+            return
+        }
+        task.didReceive(response)
+        task.didReceive(data)
+        task.didFinish()
     }
 }
 
@@ -86,14 +153,55 @@ private let viewerHTML = """
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script>
+    <script src="model-viewer-umd.js"></script>
+    <script>
+        function log(msg) {
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.debug) {
+                window.webkit.messageHandlers.debug.postMessage(msg);
+            }
+        }
+        window.addEventListener('error', function(e) {
+            log('JS ERROR: ' + e.message + ' at ' + e.filename + ':' + e.lineno);
+        });
+        window.addEventListener('load', function() {
+            log('window load');
+            const mv = document.querySelector('model-viewer');
+            if (!mv) { log('model-viewer element NOT found'); return; }
+            log('model-viewer element found, defined=' + (window.customElements.get('model-viewer') ? 'yes' : 'no'));
+            if (window.customElements.get('model-viewer')) {
+                attachModelViewerListeners(mv);
+            } else {
+                customElements.whenDefined('model-viewer').then(() => {
+                    log('model-viewer custom element defined');
+                    attachModelViewerListeners(document.querySelector('model-viewer'));
+                });
+            }
+            setTimeout(() => {
+                log('status check after 5s: loaded=' + mv.loaded + ' src=' + mv.getAttribute('src'));
+            }, 5000);
+        });
+        function attachModelViewerListeners(mv) {
+            log('attaching model-viewer listeners');
+            mv.addEventListener('load', function() { log('model-viewer: model loaded'); });
+            mv.addEventListener('error', function(e) {
+                log('model-viewer error type=' + (e.detail && e.detail.type));
+                log('model-viewer error message=' + (e.detail && e.detail.sourceError && e.detail.sourceError.message));
+                log('model-viewer error string=' + (e.detail && e.detail.sourceError && e.detail.sourceError.toString()));
+                log('model-viewer error detail=' + JSON.stringify(e.detail));
+            });
+            mv.addEventListener('preload', function() { log('model-viewer: preloading'); });
+            mv.addEventListener('model-visibility', function() { log('model-viewer: model visibility changed'); });
+        }
+    </script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #0D0F1A; }
-        model-viewer { width: 100%; height: 100%; --poster-color: transparent; }
+        model-viewer { width: 100%; height: 100%; --poster-color: #1a1c29; }
     </style>
 </head>
 <body>
-    <model-viewer src="model.glb" camera-controls auto-rotate shadow-intensity="1" exposure="1"></model-viewer>
+    <model-viewer src="model.glb" camera-controls auto-rotate shadow-intensity="1" exposure="1" alt="Generated 3D model">
+        <div slot="poster" style="color: #ffffff; font-family: sans-serif; text-align: center; padding-top: 50%;">Loading 3D model…</div>
+    </model-viewer>
 </body>
 </html>
 """

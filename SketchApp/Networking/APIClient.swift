@@ -27,7 +27,7 @@ struct APIClient {
 
         let body: [String: String] = [
             "svg_text": svgText,
-            "job_id": UUID().uuidString
+            "job_id": "tablet"
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
@@ -40,6 +40,35 @@ struct APIClient {
         guard (200..<300).contains(httpResponse.statusCode) else {
             let message = String(data: data, encoding: .utf8) ?? "No error details"
             throw APIError.serverError(statusCode: httpResponse.statusCode, message: message)
+        }
+
+        return decodeModelResponse(data)
+    }
+
+    /// Decode the backend response if it arrives as raw binary, a base64 string,
+    /// or a JSON object containing a base64 string.
+    private func decodeModelResponse(_ data: Data) -> Data {
+        // Already binary GLB (or USDZ zip) – use as-is.
+        if data.prefix(4) == Data([0x67, 0x6C, 0x54, 0x46]) {
+            return data
+        }
+
+        if let text = String(data: data, encoding: .utf8) {
+            // Plain base64 string.
+            if let decoded = Data(base64Encoded: text) {
+                print("[APIClient] decoded plain base64, \(decoded.count) bytes")
+                return decoded
+            }
+
+            // JSON object containing a base64 field.
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                for key in ["model", "glb", "data", "result", "mesh", "output"] {
+                    if let value = json[key] as? String, let decoded = Data(base64Encoded: value) {
+                        print("[APIClient] decoded base64 from JSON key '\(key)', \(decoded.count) bytes")
+                        return decoded
+                    }
+                }
+            }
         }
 
         return data
