@@ -12,7 +12,7 @@ import PostHog
 struct SketchAppApp: App {
     init() {
         let config = PostHogConfig(
-            projectToken: "<YOUR_POSTHOG_PROJECT_TOKEN>",
+            projectToken: "<phc_pDF6HeaKAZkpo4YUxQFM2A7Fy7mHzTZoaVKiEeqFLv9t>",
             host: "https://eu.i.posthog.com"
         )
 
