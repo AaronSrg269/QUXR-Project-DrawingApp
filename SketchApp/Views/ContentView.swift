@@ -9,7 +9,6 @@ struct ContentView: View {
     @State private var errorMessage = ""
     @State private var showError = false
     @State private var isFinished = false
-    @State private var debounceTask: Task<Void, Never>?
     @State private var drawingAspectRatio: CGFloat = 1.0
 
     // DEV: set to true to load bundled test model instead of calling the backend
@@ -66,46 +65,60 @@ struct ContentView: View {
                 }
                 .frame(maxHeight: .infinity)
 
-                HStack(spacing: 24) {
-                    if isFinished {
-                        AppButton(title: "Done") {
-                            debounceTask?.cancel()
-                            isFinished = false
-                            glbData = nil
-                            strokeManager.clear()
-                        }
-                    } else {
-                        AppIconButton(systemImage: "arrow.uturn.backward") {
-                            strokeManager.undo()
-                        }
-                        .disabled(!strokeManager.canUndo)
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        HStack(spacing: 24) {
+                            if isFinished {
+                                AppButton(title: "Done") {
+                                    isFinished = false
+                                    glbData = nil
+                                    strokeManager.clear()
+                                }
+                            } else {
+                                AppIconButton(systemImage: "arrow.uturn.backward") {
+                                    strokeManager.undo()
+                                }
+                                .disabled(!strokeManager.canUndo)
 
-                        AppIconButton(systemImage: "arrow.uturn.forward") {
-                            strokeManager.redo()
-                        }
-                        .disabled(!strokeManager.canRedo)
+                                AppIconButton(systemImage: "arrow.uturn.forward") {
+                                    strokeManager.redo()
+                                }
+                                .disabled(!strokeManager.canRedo)
 
-                        AppButton(title: "Reset") {
-                            debounceTask?.cancel()
-                            glbData = nil
-                            strokeManager.clear()
-                        }
-                        .disabled(strokeManager.strokes.isEmpty)
+                                AppButton(title: "Clear") {
+                                    strokeManager.clear()
+                                }
+                                .disabled(strokeManager.strokes.isEmpty)
 
-                        AppButton(
-                            title: isLoading ? "Generating…" : "Finish",
-                            color: Theme.buttonPink,
-                            pressedColor: Theme.buttonPinkPressed,
-                            action: {
-                                debounceTask?.cancel()
-                                isFinished = true
-                                generateModel()
+                                AppButton(
+                                    title: isLoading ? "Generating…" : "Generate Instance",
+                                    action: { generateModel() }
+                                )
+                                .disabled(isLoading || strokeManager.strokes.isEmpty)
                             }
-                        )
-                        .disabled(isLoading || strokeManager.strokes.isEmpty)
+                        }
+                        .frame(width: isFinished ? geo.size.width * 0.42 : geo.size.width * 0.50)
+
+                        if !isFinished {
+                            Spacer()
+
+                            AppButton(
+                                title: "Finish",
+                                color: Theme.buttonPink,
+                                pressedColor: Theme.buttonPinkPressed,
+                                action: {
+                                    isFinished = true
+                                    if glbData == nil {
+                                        generateModel()
+                                    }
+                                }
+                            )
+                            .disabled(isLoading || strokeManager.strokes.isEmpty)
+                        }
                     }
                 }
-                .padding(.vertical, 12)
+                .frame(height: 50)
+                .padding(.vertical, 4)
             }
             .padding(outerPadding)
         }
@@ -113,17 +126,6 @@ struct ContentView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(errorMessage)
-        }
-        .onChange(of: strokeManager.strokes) { _, _ in
-            guard !useDevModel, !isFinished else { return }
-            debounceTask?.cancel()
-            debounceTask = Task {
-                try? await Task.sleep(for: .seconds(0.7))
-                guard !Task.isCancelled else { return }
-                await MainActor.run {
-                    generateModel()
-                }
-            }
         }
     }
 
@@ -147,7 +149,6 @@ struct ContentView: View {
         guard !svg.isEmpty else { return }
 
         isLoading = true
-        glbData = nil
 
         Task {
             do {

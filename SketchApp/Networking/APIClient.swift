@@ -1,8 +1,11 @@
 import Foundation
+import Network
 
 struct APIClient {
     static let baseURL = URL(string: "http://ln-dsk-0hxrv.qu.tu-berlin.de")!
     static let endpoint = baseURL.appendingPathComponent("api_model/generate")
+
+    private static let maxRetries = 1
 
     /// Health/liveness/ready check. Returns (statusCode, bodyString) or throws URLSession error.
     func checkEndpoint(_ path: String) async throws -> (Int, String) {
@@ -15,9 +18,14 @@ struct APIClient {
     }
 
     func generateMesh(svgText: String) async throws -> Data {
+        guard await isNetworkAvailable() else {
+            throw APIError.noConnection
+        }
+
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 90
-        configuration.timeoutIntervalForResource = 90
+        configuration.timeoutIntervalForResource = 120
+        configuration.waitsForConnectivity = true
         let session = URLSession(configuration: configuration)
 
         var request = URLRequest(url: APIClient.endpoint)
@@ -31,18 +39,59 @@ struct APIClient {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [])
 
-        let (data, response) = try await session.data(for: request)
+        var lastError: Error = APIError.invalidResponse
+        for attempt in 0...Self.maxRetries {
+            if attempt > 0 {
+                print("[APIClient] retry attempt \(attempt)")
+                try await Task.sleep(for: .seconds(2))
+            }
+            do {
+                let (data, response) = try await session.data(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw APIError.invalidResponse
+                }
+
+                guard (200..<300).contains(httpResponse.statusCode) else {
+                    let message = String(data: data, encoding: .utf8) ?? "No error details"
+                    let err = APIError.serverError(statusCode: httpResponse.statusCode, message: message)
+                    // Only retry on 5xx server errors
+                    if httpResponse.statusCode >= 500 {
+                        lastError = err
+                        continue
+                    }
+                    throw err
+                }
+
+                guard !data.isEmpty else {
+                    throw APIError.emptyResponse
+                }
+
+                return decodeModelResponse(data)
+            } catch let error as URLError where error.code == .timedOut {
+                lastError = APIError.timeout
+                continue
+            } catch let error as URLError where error.code == .notConnectedToInternet || error.code == .networkConnectionLost {
+                throw APIError.noConnection
+            } catch let error as APIError {
+                throw error
+            } catch {
+                lastError = error
+                continue
+            }
         }
+        throw lastError
+    }
 
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            let message = String(data: data, encoding: .utf8) ?? "No error details"
-            throw APIError.serverError(statusCode: httpResponse.statusCode, message: message)
+    private func isNetworkAvailable() async -> Bool {
+        await withCheckedContinuation { continuation in
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { path in
+                monitor.cancel()
+                continuation.resume(returning: path.status == .satisfied)
+            }
+            monitor.start(queue: DispatchQueue(label: "APIClient.connectivity"))
         }
-
-        return decodeModelResponse(data)
     }
 
     /// Decode the backend response if it arrives as raw binary, a base64 string,
@@ -78,6 +127,9 @@ struct APIClient {
 enum APIError: LocalizedError {
     case invalidResponse
     case serverError(statusCode: Int, message: String)
+    case noConnection
+    case timeout
+    case emptyResponse
 
     var errorDescription: String? {
         switch self {
@@ -85,6 +137,12 @@ enum APIError: LocalizedError {
             return "The server returned an invalid response."
         case .serverError(let statusCode, let message):
             return "Server error \(statusCode): \(message)"
+        case .noConnection:
+            return "No internet connection. Please check your network and try again."
+        case .timeout:
+            return "The request timed out. The server may be busy — please try again."
+        case .emptyResponse:
+            return "The server returned an empty response. Please try again."
         }
     }
 }

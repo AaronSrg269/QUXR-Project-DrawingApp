@@ -6,13 +6,20 @@ struct ModelDisplayView: View {
     let isLoading: Bool
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .bottom) {
             Theme.background
             ModelWebContainer(glbData: glbData)
             if isLoading {
-                ProgressView()
-                    .scaleEffect(1.5)
-                    .tint(Theme.accent)
+                VStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(1.2)
+                        .tint(Theme.accent)
+                    Text("Please allow for up to 20 seconds\nfor the 3D model to generate")
+                        .font(.caption)
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(Theme.textPrimary.opacity(0.55))
+                }
+                .padding(.bottom, 24)
             } else if glbData == nil {
                 VStack(spacing: 8) {
                     Image(systemName: "rotate.3d")
@@ -22,6 +29,7 @@ struct ModelDisplayView: View {
                         .foregroundColor(Theme.textPrimary.opacity(0.45))
                         .font(.subheadline)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
     }
@@ -182,7 +190,10 @@ private let viewerHTML = """
         });
         function attachModelViewerListeners(mv) {
             log('attaching model-viewer listeners');
-            mv.addEventListener('load', function() { log('model-viewer: model loaded'); });
+            mv.addEventListener('load', function() {
+                log('model-viewer: model loaded');
+                mv.classList.add('loaded');
+            });
             mv.addEventListener('error', function(e) {
                 log('model-viewer error type=' + (e.detail && e.detail.type));
                 log('model-viewer error message=' + (e.detail && e.detail.sourceError && e.detail.sourceError.message));
@@ -195,12 +206,12 @@ private let viewerHTML = """
     </script>
     <style>
         body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #0D0F1A; }
-        model-viewer { width: 100%; height: 100%; --poster-color: #1a1c29; }
+        model-viewer { width: 100%; height: 100%; --poster-color: #1a1c29; opacity: 0; transition: opacity 0.6s ease-in; will-change: opacity; transform: translateZ(0); }
+        model-viewer.loaded { opacity: 1; }
     </style>
 </head>
 <body>
-    <model-viewer src="model.glb" camera-controls auto-rotate shadow-intensity="1" exposure="1" alt="Generated 3D model">
-        <div slot="poster" style="color: #ffffff; font-family: sans-serif; text-align: center; padding-top: 50%;">Loading 3D model…</div>
+    <model-viewer src="model.glb" auto-rotate auto-rotate-delay="0" rotation-per-second="27deg" shadow-intensity="1" exposure="1" alt="Generated 3D model">
     </model-viewer>
 </body>
 </html>
